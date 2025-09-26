@@ -1,0 +1,214 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Multiplayer Snake</title>
+  <style>
+    :root{
+      --bg: #0f1724;
+      --panel: #0b1220;
+      --accent: #06b6d4;
+      --food: #ef4444;
+      --you: #60a5fa;
+      --other: #34d399;
+      --dead: #6b7280;
+    }
+    body{
+      margin:0;
+      min-height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background: linear-gradient(180deg, #071029 0%, #071a25 100%);
+      color:#e6eef6;
+      font-family: Inter, system-ui, Arial;
+    }
+    .container{
+      width: 900px;
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 16px;
+      align-items:start;
+    }
+    .panel{
+      background: rgba(255,255,255,0.03);
+      border-radius: 12px;
+      padding: 12px;
+      box-shadow: 0 8px 24px rgba(2,6,23,0.6);
+      border: 1px solid rgba(255,255,255,0.04);
+    }
+    canvas{
+      display:block;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border-radius:10px;
+      width: 560px;
+      height: 560px;
+      image-rendering: pixelated;
+    }
+    h2{ margin:8px 0 12px 0; font-weight:600; color:var(--accent); }
+    #scores { font-size:14px; line-height:1.6; }
+    .small { font-size:13px; color:#9fb0c6; }
+    .hint { margin-top:10px; font-size:13px; color:#9fb0c6; }
+    .score-row { display:flex; justify-content:space-between; padding:6px 8px; border-radius:6px; margin-bottom:6px; background:rgba(255,255,255,0.01); }
+    .you { background: linear-gradient(90deg, rgba(96,165,250,0.08), rgba(96,165,250,0.03)); border:1px solid rgba(96,165,250,0.06); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="panel">
+      <h2>Multiplayer Snake — Demo</h2>
+      <canvas id="game" width="50" height="50"></canvas>
+      <div class="hint small">Use arrow keys to move. Open multiple tabs to play together.</div>
+    </div>
+
+    <div class="panel">
+      <h3>Scoreboard</h3>
+      <div id="scores" class="small">Connecting...</div>
+      <div style="height:12px"></div>
+      <div class="small">Legend: <span style="color:var(--you)">You</span> • <span style="color:var(--other)">Other</span> • <span style="color:var(--dead)">Dead</span></div>
+    </div>
+  </div>
+
+<script>
+/*
+  Client expects server format:
+  - 0x03 ASSIGN_ID [id]
+  - 0x02 STATE_UPDATE:
+    [type:1][numPlayers:1]
+    for each player: [id:1][score:2BE][alive:1][len:1][len*(x:1,y:1)]
+    [numFoods:1][numFoods*(x:1,y:1)]
+*/
+
+const MAP_SIZE = 50;
+const CELL = 11; // drawing cell (canvas styled scaled)
+const CANVAS_PIX = MAP_SIZE * CELL;
+
+const ws = new WebSocket('ws://localhost:8080');
+ws.binaryType = 'arraybuffer';
+
+const canvas = document.getElementById('game');
+canvas.width = MAP_SIZE;
+canvas.height = MAP_SIZE;
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+let myId = null;
+let players = {}; // id -> {score,alive,snake}
+let foods = [];
+
+const scoresEl = document.getElementById('scores');
+
+ws.onopen = () => { scoresEl.innerText = 'Connected. Waiting for state...'; }
+ws.onclose = () => { scoresEl.innerText = 'Disconnected from server'; }
+
+ws.onmessage = (ev) => {
+  const view = new DataView(ev.data);
+  let off = 0;
+  const type = view.getUint8(off++);
+  if (type === 0x03){
+    myId = view.getUint8(off++);
+    //console.log('assigned', myId);
+    return;
+  }
+  if (type === 0x02){
+    const numPlayers = view.getUint8(off++);
+    players = {};
+    for (let i=0;i<numPlayers;i++){
+      const id = view.getUint8(off++);
+      const score = view.getUint16(off); off += 2;
+      const alive = view.getUint8(off++) === 1;
+      const len = view.getUint8(off++);
+      const snake = [];
+      for (let j=0;j<len;j++){
+        const x = view.getUint8(off++), y = view.getUint8(off++);
+        snake.push({x,y});
+      }
+      players[id] = { score, alive, snake };
+    }
+    const numFoods = view.getUint8(off++);
+    foods = [];
+    for (let i=0;i<numFoods;i++){
+      const x = view.getUint8(off++), y = view.getUint8(off++);
+      foods.push({x,y});
+    }
+    render();
+  }
+};
+
+function sendDir(dir){
+  if (!ws || ws.readyState !== 1) return;
+  const b = new Uint8Array(2);
+  b[0] = 0x01; b[1] = dir;
+  ws.send(b.buffer);
+}
+
+document.addEventListener('keydown', (e) => {
+  let dir;
+  if (e.key === 'ArrowUp') dir = 0;
+  if (e.key === 'ArrowDown') dir = 1;
+  if (e.key === 'ArrowLeft') dir = 2;
+  if (e.key === 'ArrowRight') dir = 3;
+  if (dir !== undefined) sendDir(dir);
+});
+
+// draw on an offscreen canvas for crisp pixel scaling
+const off = document.createElement('canvas');
+off.width = MAP_SIZE; off.height = MAP_SIZE;
+const offctx = off.getContext('2d');
+
+function render(){
+  // clear
+  offctx.clearRect(0,0,MAP_SIZE,MAP_SIZE);
+
+  // background subtle grid
+  offctx.fillStyle = '#071827';
+  offctx.fillRect(0,0,MAP_SIZE,MAP_SIZE);
+
+  // foods
+  for (const f of foods){
+    offctx.fillStyle = '#ff6b6b';
+    offctx.fillRect(f.x, f.y, 1, 1);
+  }
+
+  // snakes
+  for (const [id, p] of Object.entries(players)){
+    const isMe = (Number(id) === myId);
+    const alive = p.alive;
+    // head first
+    if (p.snake.length > 0){
+      // body
+      for (let i=p.snake.length-1;i>=0;i--){
+        const s = p.snake[i];
+        if (!alive) offctx.fillStyle = '#6b7280';
+        else offctx.fillStyle = isMe ? '#60a5fa' : '#34d399';
+        offctx.fillRect(s.x, s.y, 1, 1);
+      }
+      // head border
+      const h = p.snake[0];
+      offctx.fillStyle = alive ? '#0f1724' : '#111827';
+      offctx.fillRect(h.x, h.y, 1, 1);
+    }
+  }
+
+  // scale to visible canvas with crisp pixels
+  // draw offscreen onto visible canvas stretched
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+
+  // update scoreboard
+  const rows = [];
+  const arr = Object.entries(players).sort((a,b)=> b[1].score - a[1].score);
+  for (const [id,p] of arr){
+    const isMe = Number(id) === myId;
+    const label = isMe ? `${id} (you)` : id;
+    const status = p.alive ? '' : ' ⚰';
+    const cls = isMe ? 'you' : '';
+    rows.push(`<div class="score-row ${isMe ? 'you' : ''}"><div><strong>${label}</strong></div><div>${p.score}${status}</div></div>`);
+  }
+  scoresEl.innerHTML = rows.join('');
+}
+
+</script>
+</body>
+</html>

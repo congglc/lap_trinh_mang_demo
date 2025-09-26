@@ -83,7 +83,7 @@ const MAP_SIZE = 50;
 const CELL = 11; // drawing cell (canvas styled scaled)
 const CANVAS_PIX = MAP_SIZE * CELL;
 
-const ws = new WebSocket('ws://localhost:8080');
+const ws = new WebSocket('wss://lap-trinh-mang-demo.onrender.com');
 ws.binaryType = 'arraybuffer';
 
 const canvas = document.getElementById('game');

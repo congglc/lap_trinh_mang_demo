@@ -1,7 +1,7 @@
 // server.mjs
 import { WebSocketServer } from "ws";
 
-const PORT = 8080;
+const PORT = process.env.PORT || 8080;
 const TICK_MS = 120; // tick rate (ms)
 const MAP_SIZE = 50;
 const RESPAWN_MS = 1500;

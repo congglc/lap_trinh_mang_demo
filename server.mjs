@@ -6,7 +6,16 @@ const TICK_MS = 120; // tick rate (ms)
 const MAP_SIZE = 50;
 const RESPAWN_MS = 1500;
 
-const wss = new WebSocketServer({ port: PORT });
+// Bật permessage-deflate với threshold để tránh nén gói nhỏ
+const wss = new WebSocketServer({
+  port: PORT,
+  perMessageDeflate: {
+    zlibDeflateOptions: { level: 3 }, // mức nén vừa phải
+    clientNoContextTakeover: true,
+    serverNoContextTakeover: true,
+    threshold: 128 // chỉ nén khi gói tin > 128 byte
+  }
+});
 console.log(`Server listening ws://localhost:${PORT}`);
 
 const players = new Map(); // id -> player
@@ -152,15 +161,15 @@ function tick(){
     if (arr.length > 1) arr.forEach(id=>dead.add(id));
   }
 
-  // helper collision: check point collides with any snake segment, excluding movement tail if it will move
+  // helper collision
   function collidesWithSnakes(px,py, excludeId=null){
     for (const [oid, other] of players.entries()){
       const len = other.snake.length;
       if (len === 0) continue;
       const excludeTail = !willEat.get(oid);
       for (let i=0;i<other.snake.length;i++){
-        if (excludeId === oid && i === 0) continue; // don't compare to head of same snake here
-        if (excludeTail && i === other.snake.length - 1) continue; // tail will move
+        if (excludeId === oid && i === 0) continue;
+        if (excludeTail && i === other.snake.length - 1) continue;
         const s = other.snake[i];
         if (s.x === px && s.y === py) return true;
       }
